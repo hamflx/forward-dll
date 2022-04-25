@@ -78,14 +78,12 @@ macro_rules! define_function {
         pub extern "system" fn $proc() -> u32 {
             unsafe {
                 std::arch::asm!(
-                    "push rbx",
                     "push rcx",
                     "push rdx",
-                    "push rbp",
-                    "push rsi",
-                    "push rdi",
                     "push r8",
                     "push r9",
+                    "push r10",
+                    "push r11",
                     options(nostack)
                 );
                 std::arch::asm!(
@@ -99,14 +97,12 @@ macro_rules! define_function {
                     options(nostack)
                 );
                 std::arch::asm!(
+                    "pop r11",
+                    "pop r10",
                     "pop r9",
                     "pop r8",
-                    "pop rdi",
-                    "pop rsi",
-                    "pop rbp",
                     "pop rdx",
                     "pop rcx",
-                    "pop rbx",
                     "jmp rax",
                     options(nostack)
                 );
