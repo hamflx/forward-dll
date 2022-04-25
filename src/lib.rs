@@ -2,7 +2,10 @@ use std::ffi::{CString, NulError};
 
 use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
-    System::LibraryLoader::{GetProcAddress, LoadLibraryA},
+    System::LibraryLoader::{
+        GetModuleHandleExA, GetProcAddress, LoadLibraryA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        GET_MODULE_HANDLE_EX_FLAG_PIN,
+    },
 };
 
 #[macro_export]
@@ -127,7 +130,25 @@ impl<const N: usize> DllForwarder<N> {
     }
 }
 
-pub fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
+/// 保持指定的模块总是位于内存中，防止被 FreeLibrary 卸载。
+pub fn keep_module_in_memory(inst: HINSTANCE) -> ForwardResult<()> {
+    let mut module_handle = 0;
+    let pin_success = unsafe {
+        GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            inst as *const u8,
+            &mut module_handle,
+        )
+    } != 0;
+    if !pin_success {
+        return Err(ForwardError::Win32Error("GetModuleHandleExA", unsafe {
+            GetLastError()
+        }));
+    }
+    Ok(())
+}
+
+fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
     let module_name = CString::new(module_full_path).map_err(ForwardError::StringError)?;
     let module_handle = unsafe { LoadLibraryA(module_name.as_ptr() as *const u8) };
     if module_handle == 0 {
@@ -138,7 +159,7 @@ pub fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
     Ok(module_handle)
 }
 
-pub fn get_proc_address_by_module(
+fn get_proc_address_by_module(
     inst: HINSTANCE,
     proc_name: &str,
 ) -> ForwardResult<unsafe extern "system" fn() -> isize> {
