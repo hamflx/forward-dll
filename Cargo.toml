@@ -1,0 +1,13 @@
+[package]
+name = "forward-dll"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/hamflx/forward-dll"
+
+[dependencies]
+windows-sys = { version = "0.35.0", features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_System_LibraryLoader",
+  # "Win32_UI_WindowsAndMessaging"
+] }
