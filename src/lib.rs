@@ -3,8 +3,8 @@ use std::ffi::{CString, NulError};
 use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
     System::LibraryLoader::{
-        GetModuleHandleExA, GetProcAddress, LoadLibraryA, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-        GET_MODULE_HANDLE_EX_FLAG_PIN,
+        FreeLibrary, GetModuleHandleExA, GetProcAddress, LoadLibraryA,
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
     },
 };
 
@@ -62,26 +62,44 @@ macro_rules! forward_dll {
                 $(stringify!($proc),)*
             ]
         };
-        forward_dll::define_function!($name, 0, $($proc)*);
+        forward_dll::define_function!($lib, $name, 0, $($proc)*);
     };
 }
 
 #[macro_export]
 macro_rules! define_function {
-    ($name:ident, $index:expr, ) => {};
-    ($name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
+    ($lib:expr, $name:ident, $index:expr, ) => {};
+    ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
         #[no_mangle]
         pub extern "system" fn $proc() -> u32 {
             unsafe {
                 std::arch::asm!(
+                    "push rcx",
+                    "push rdx",
+                    "push r8",
+                    options(nostack)
+                );
+                std::arch::asm!(
+                    "sub rsp, 30h",
+                    "call rax",
+                    "add rsp, 30h",
+                    in("rax") forward_dll::default_jumper,
+                    in("rcx") std::concat!($lib, "\0").as_ptr() as usize,
+                    in("rdx") std::concat!(std::stringify!($proc), "\0").as_ptr() as usize,
+                    in("r8") $name.target_functions_address[$index],
+                    options(nostack)
+                );
+                std::arch::asm!(
+                    "pop r8",
+                    "pop rdx",
+                    "pop rcx",
                     "jmp rax",
-                    in("rax") $name.target_functions_address[$index],
                     options(nostack)
                 );
             }
             1
         }
-        forward_dll::define_function!($name, ($index + 1), $($procs)*);
+        forward_dll::define_function!($lib, $name, ($index + 1), $($procs)*);
     };
 }
 
@@ -116,9 +134,7 @@ pub struct DllForwarder<const N: usize> {
 impl<const N: usize> DllForwarder<N> {
     /// 将所有函数的跳转地址设置为对应的 DLL 的同名函数地址。
     pub fn forward_all(&mut self) -> ForwardResult<()> {
-        let load_module_dir = "C:\\Windows\\System32\\";
-        let module_full_path = format!("{}{}", load_module_dir, self.lib_name);
-        let module_handle = get_module_handle(module_full_path.as_str())?;
+        let module_handle = get_module_handle(self.lib_name)?;
 
         for index in 0..self.target_functions_address.len() {
             let addr_in_remote_module =
@@ -146,6 +162,30 @@ pub fn keep_module_in_memory(inst: HINSTANCE) -> ForwardResult<()> {
         }));
     }
     Ok(())
+}
+
+/// 默认的跳板，如果没有执行初始化操作，则进入该函数。
+pub fn default_jumper(
+    lib_name: *const u8,
+    func_name: *const u8,
+    original_fn_addr: *const (),
+) -> usize {
+    if original_fn_addr as usize != 0 {
+        return original_fn_addr as usize;
+    }
+
+    let module_handle = unsafe { LoadLibraryA(lib_name) };
+    if module_handle != 0 {
+        let addr = unsafe { GetProcAddress(module_handle, func_name) };
+        unsafe { FreeLibrary(module_handle) };
+        return addr.map(|addr| addr as usize).unwrap_or(exit_fn as usize);
+    }
+
+    exit_fn as usize
+}
+
+pub fn exit_fn() {
+    std::process::exit(1);
 }
 
 fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
