@@ -78,15 +78,20 @@ macro_rules! define_function {
         pub extern "system" fn $proc() -> u32 {
             unsafe {
                 std::arch::asm!(
+                    "push rbx",
                     "push rcx",
                     "push rdx",
+                    "push rbp",
+                    "push rsi",
+                    "push rdi",
                     "push r8",
+                    "push r9",
                     options(nostack)
                 );
                 std::arch::asm!(
-                    "sub rsp, 30h",
+                    "sub rsp, 28h",
                     "call rax",
-                    "add rsp, 30h",
+                    "add rsp, 28h",
                     in("rax") forward_dll::default_jumper,
                     in("rcx") std::concat!($lib, "\0").as_ptr() as usize,
                     in("rdx") std::concat!(std::stringify!($proc), "\0").as_ptr() as usize,
@@ -94,9 +99,14 @@ macro_rules! define_function {
                     options(nostack)
                 );
                 std::arch::asm!(
+                    "pop r9",
                     "pop r8",
+                    "pop rdi",
+                    "pop rsi",
+                    "pop rbp",
                     "pop rdx",
                     "pop rcx",
+                    "pop rbx",
                     "jmp rax",
                     options(nostack)
                 );
