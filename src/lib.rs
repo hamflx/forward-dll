@@ -4,7 +4,7 @@ use windows_sys::Win32::{
     Foundation::{GetLastError, HINSTANCE},
     System::LibraryLoader::{
         FreeLibrary, GetModuleHandleExA, GetProcAddress, LoadLibraryA,
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_PIN,
+        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
     },
 };
 
@@ -44,6 +44,8 @@ macro_rules! count {
 /// #[no_mangle]
 /// pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 ///   if reason == 1 {
+///     // 这里要自行持有底层的 version.dll 的句柄，防止被释放。
+///     let _ = forward_dll::load_library("C:\\Windows\\system32\\version.dll");
 ///     let _ = unsafe { DLL_VERSION_FORWARDER.forward_all() };
 ///   }
 ///   1
@@ -134,7 +136,7 @@ pub struct DllForwarder<const N: usize> {
 impl<const N: usize> DllForwarder<N> {
     /// 将所有函数的跳转地址设置为对应的 DLL 的同名函数地址。
     pub fn forward_all(&mut self) -> ForwardResult<()> {
-        let module_handle = get_module_handle(self.lib_name)?;
+        let module_handle = load_library(self.lib_name)?;
 
         for index in 0..self.target_functions_address.len() {
             let addr_in_remote_module =
@@ -142,16 +144,18 @@ impl<const N: usize> DllForwarder<N> {
             self.target_functions_address[index] = addr_in_remote_module as *const usize as usize;
         }
 
+        free_library(module_handle);
+
         Ok(())
     }
 }
 
-/// 保持指定的模块总是位于内存中，防止被 FreeLibrary 卸载。
-pub fn keep_module_in_memory(inst: HINSTANCE) -> ForwardResult<()> {
+/// 通过调用 GetModuleHandleExA 增加引用计数。
+pub fn load_library_by_handle(inst: HINSTANCE) -> ForwardResult<HINSTANCE> {
     let mut module_handle = 0;
     let pin_success = unsafe {
         GetModuleHandleExA(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             inst as *const u8,
             &mut module_handle,
         )
@@ -161,7 +165,7 @@ pub fn keep_module_in_memory(inst: HINSTANCE) -> ForwardResult<()> {
             GetLastError()
         }));
     }
-    Ok(())
+    Ok(module_handle)
 }
 
 /// 默认的跳板，如果没有执行初始化操作，则进入该函数。
@@ -188,8 +192,9 @@ pub fn exit_fn() {
     std::process::exit(1);
 }
 
-fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
-    let module_name = CString::new(module_full_path).map_err(ForwardError::StringError)?;
+/// LoadLibraryA 的包装。
+pub fn load_library(lib_filename: &str) -> ForwardResult<HINSTANCE> {
+    let module_name = CString::new(lib_filename).map_err(ForwardError::StringError)?;
     let module_handle = unsafe { LoadLibraryA(module_name.as_ptr() as *const u8) };
     if module_handle == 0 {
         return Err(ForwardError::Win32Error("LoadLibraryA", unsafe {
@@ -197,6 +202,11 @@ fn get_module_handle(module_full_path: &str) -> ForwardResult<HINSTANCE> {
         }));
     }
     Ok(module_handle)
+}
+
+/// FreeLibrary 的包装。
+pub fn free_library(inst: HINSTANCE) {
+    unsafe { FreeLibrary(inst) };
 }
 
 fn get_proc_address_by_module(
