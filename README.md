@@ -35,3 +35,9 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
   1
 }
 ```
+
+## License
+
+[MIT](https://opensource.org/licenses/MIT)
+
+Copyright (c) 2022-present, hamflx
