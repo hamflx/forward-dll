@@ -6,7 +6,7 @@
 
 ```rust
 forward_dll::forward_dll!(
-  "version.dll",
+  "C:\\Windows\\system32\\version.dll",
   DLL_VERSION_FORWARDER,
   GetFileVersionInfoA
   GetFileVersionInfoByHandle
