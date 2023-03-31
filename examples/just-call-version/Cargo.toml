@@ -1,0 +1,7 @@
+[package]
+name = "just-call-version"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+windows = { version = "0.48.0", features = ["Win32_Storage_FileSystem", "Win32_Foundation"] }

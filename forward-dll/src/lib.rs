@@ -8,10 +8,16 @@ use windows_sys::Win32::{
     },
 };
 
+pub use forward_dll_derive::ForwardModule;
+
+pub trait ForwardModule {
+    fn init(&self) -> ForwardResult<()>;
+}
+
 #[macro_export]
 macro_rules! count {
     () => (0usize);
-    ( $x:tt $($xs:tt)* ) => (1usize + forward_dll::count!($($xs)*));
+    ( $x:tt $($xs:tt)* ) => (1usize + $crate::count!($($xs)*));
 }
 
 /// 生成转发的导出函数，以及初始化方法，须在 DllMain 中调用初始化方法，以使生成的函数指向转发的目标函数。
@@ -55,17 +61,17 @@ macro_rules! count {
 #[macro_export]
 macro_rules! forward_dll {
     ($lib:expr, $name:ident, $($proc:ident)*) => {
-        static mut $name: forward_dll::DllForwarder<{ forward_dll::count!($($proc)*) }> = forward_dll::DllForwarder {
+        static mut $name: $crate::DllForwarder<{ $crate::count!($($proc)*) }> = $crate::DllForwarder {
             lib_name: $lib,
             target_functions_address: [
                 0;
-                forward_dll::count!($($proc)*)
+                $crate::count!($($proc)*)
             ],
             target_function_names: [
                 $(stringify!($proc),)*
             ]
         };
-        forward_dll::define_function!($lib, $name, 0, $($proc)*);
+        $crate::define_function!($lib, $name, 0, $($proc)*);
     };
 }
 
@@ -73,42 +79,48 @@ macro_rules! forward_dll {
 macro_rules! define_function {
     ($lib:expr, $name:ident, $index:expr, ) => {};
     ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
-        #[no_mangle]
-        pub extern "system" fn $proc() -> u32 {
-            unsafe {
-                std::arch::asm!(
-                    "push rcx",
-                    "push rdx",
-                    "push r8",
-                    "push r9",
-                    "push r10",
-                    "push r11",
-                    options(nostack)
-                );
-                std::arch::asm!(
-                    "sub rsp, 28h",
-                    "call rax",
-                    "add rsp, 28h",
-                    in("rax") forward_dll::default_jumper,
-                    in("rcx") std::concat!($lib, "\0").as_ptr() as usize,
-                    in("rdx") std::concat!(std::stringify!($proc), "\0").as_ptr() as usize,
-                    in("r8") $name.target_functions_address[$index],
-                    options(nostack)
-                );
-                std::arch::asm!(
-                    "pop r11",
-                    "pop r10",
-                    "pop r9",
-                    "pop r8",
-                    "pop rdx",
-                    "pop rcx",
-                    "jmp rax",
-                    options(nostack)
-                );
+        const _: () = {
+            // 需要提前将指针计算出来，不然放在函数内的话，在 dev 模式编译会导致编译器生成 sub rsp, 20h 指令，而且会把字符串长度放在栈上。
+            const lib_name_ptr: *const u8 = std::concat!($lib, "\0").as_ptr();
+            const fn_name_ptr: *const u8 = std::concat!(std::stringify!($proc), "\0").as_ptr();
+
+            #[no_mangle]
+            pub extern "system" fn $proc() -> u32 {
+                unsafe {
+                    std::arch::asm!(
+                        "push rcx",
+                        "push rdx",
+                        "push r8",
+                        "push r9",
+                        "push r10",
+                        "push r11",
+                        options(nostack)
+                    );
+                    std::arch::asm!(
+                        "sub rsp, 28h",
+                        "call rax",
+                        "add rsp, 28h",
+                        in("rax") $crate::default_jumper,
+                        in("rcx") lib_name_ptr,
+                        in("rdx") fn_name_ptr,
+                        in("r8") $name.target_functions_address[$index],
+                        options(nostack)
+                    );
+                    std::arch::asm!(
+                        "pop r11",
+                        "pop r10",
+                        "pop r9",
+                        "pop r8",
+                        "pop rdx",
+                        "pop rcx",
+                        "jmp rax",
+                        options(nostack)
+                    );
+                }
+                1
             }
-            1
-        }
-        forward_dll::define_function!($lib, $name, ($index + 1), $($procs)*);
+        };
+        $crate::define_function!($lib, $name, ($index + 1), $($procs)*);
     };
 }
 
@@ -176,7 +188,11 @@ pub fn load_library_by_handle(inst: HINSTANCE) -> ForwardResult<HINSTANCE> {
 }
 
 /// 默认的跳板，如果没有执行初始化操作，则进入该函数。
-pub fn default_jumper(
+///
+/// # Safety
+///
+/// 指针将会透传给 Win32 API。
+pub unsafe fn default_jumper(
     lib_name: *const u8,
     func_name: *const u8,
     original_fn_addr: *const (),
@@ -185,10 +201,10 @@ pub fn default_jumper(
         return original_fn_addr as usize;
     }
 
-    let module_handle = unsafe { LoadLibraryA(lib_name) };
+    let module_handle = LoadLibraryA(lib_name);
     if module_handle != 0 {
-        let addr = unsafe { GetProcAddress(module_handle, func_name) };
-        unsafe { FreeLibrary(module_handle) };
+        let addr = GetProcAddress(module_handle, func_name);
+        FreeLibrary(module_handle);
         return addr.map(|addr| addr as usize).unwrap_or(exit_fn as usize);
     }
 

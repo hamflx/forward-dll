@@ -1,0 +1,15 @@
+[package]
+name = "forward-dll"
+description = "Forward dll functions."
+version = "0.1.5"
+edition = "2021"
+repository = "https://github.com/hamflx/forward-dll"
+license = "MIT"
+
+[dependencies]
+windows-sys = { version = "0.35.0", features = [
+  "Win32_Foundation",
+  "Win32_System_Memory",
+  "Win32_System_LibraryLoader",
+] }
+forward-dll-derive = { path = "../forward-dll-derive" }

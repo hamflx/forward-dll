@@ -1,0 +1,12 @@
+[package]
+name = "forward-dll-derive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+object = "0.30.3"
+quote = "1.0.26"
+syn = { version = "2.0.12", features = ["full"] }
