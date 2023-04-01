@@ -79,7 +79,6 @@ macro_rules! define_function {
     ($lib:expr, $name:ident, $index:expr, ) => {};
     ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
         const _: () = {
-            // 需要提前将指针计算出来，不然放在函数内的话，在 dev 模式编译会导致编译器生成 sub rsp, 20h 指令，而且会把字符串长度放在栈上。
             fn default_jumper(original_fn_addr: *const ()) -> usize {
                 if original_fn_addr as usize != 0 {
                     return original_fn_addr as usize;
