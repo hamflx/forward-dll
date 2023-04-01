@@ -1,4 +1,4 @@
-use object::Object;
+use object::read::pe::{PeFile32, PeFile64};
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, LitStr};
@@ -10,17 +10,51 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
         .attrs
         .iter()
         .find(|i| i.path().is_ident("forward"))
-        .expect(r#"你需要添加 #[forward("path/of/target_dll.dll")]"#);
-    let dll_path: LitStr = forward_attr.parse_args().expect(r#"#[forward()] 的参数应为一个字符串字面量，如 #[forward("C:\Windows\System32\version.dll")]"#);
-    let struct_name = input.ident;
+        .expect(r#"你需要添加 #[forward(target = "path/of/target_dll.dll")]"#);
 
-    let export_names = get_dll_export_names(dll_path.value().as_str());
-    let export_idents: Vec<_> = export_names
+    // 解析 #[forward(target = "", ordinal)] 的参数。
+    let mut dll_path: Option<LitStr> = None;
+    let mut has_ordinal = false;
+    forward_attr
+        .parse_nested_meta(|meta| {
+            let path = &meta.path;
+            if path.is_ident("target") {
+                let value = meta.value().unwrap();
+                dll_path = Some(value.parse().unwrap());
+            } else if path.is_ident("ordinal") {
+                has_ordinal = true;
+            }
+            Ok(())
+        })
+        .expect("测试两下");
+
+    let dll_path = dll_path.expect(
+        r#"#[forward()] 的 target 参数为必填项，如 #[forward(target = "C:\Windows\System32\version.dll")]"#,
+    );
+    let exports = get_dll_export_names(dll_path.value().as_str())
+        .expect("指定的 DLL 可能是一个无效的 PE 文件");
+
+    // 生成 /EXPORT:EntryName 的编译器参数。
+    if has_ordinal {
+        generate_linker_args(&exports);
+    }
+
+    let export_names: Vec<_> = exports.iter().map(|(_, fn_name)| fn_name).collect();
+    let export_definitions: Vec<_> = exports
         .iter()
-        .map(|i| format_ident!("{}", i))
+        .map(|(_, fn_name)| {
+            let export_name = match has_ordinal {
+                true => format_ident!("_{}", fn_name),
+                false => format_ident!("{}", fn_name),
+            };
+            let fn_name = format_ident!("{}", fn_name);
+            quote! {
+                #export_name = #fn_name
+            }
+        })
         .collect();
-    let export_count = export_names.len();
-
+    let export_count = exports.len();
+    let struct_name = input.ident;
     let impl_code = quote! {
         const _ : () = {
             extern crate forward_dll as _forward_dll;
@@ -33,7 +67,7 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
                 target_function_names: [#(#export_names),*],
             };
 
-            _forward_dll::define_function!(#dll_path, _FORWARDER, 0, #(#export_idents)*);
+            _forward_dll::define_function!(#dll_path, _FORWARDER, 0, #(#export_definitions)*);
 
             impl _forward_dll::ForwardModule for #struct_name {
                 fn init(&self) -> _forward_dll::ForwardResult<()> {
@@ -45,13 +79,61 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
     impl_code.into()
 }
 
-fn get_dll_export_names(dll_path: &str) -> Vec<String> {
+fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
     let dll_file = std::fs::read(dll_path).unwrap();
-    let pe = object::File::parse(&*dll_file).unwrap();
-    let exports = pe.exports().unwrap();
+    let in_data = dll_file.as_slice();
+
+    let kind = object::FileKind::parse(in_data).map_err(|err| format!("Invalid file: {err}"))?;
+    let exports = match kind {
+        object::FileKind::Pe32 => PeFile32::parse(in_data)
+            .unwrap()
+            .export_table()
+            .unwrap()
+            .unwrap()
+            .exports(),
+        object::FileKind::Pe64 => PeFile64::parse(in_data)
+            .unwrap()
+            .export_table()
+            .unwrap()
+            .unwrap()
+            .exports(),
+        _ => return Err("Invalid file".to_string()),
+    }
+    .map_err(|err| format!("Invalid file: {err}"))?;
+
     let mut names = Vec::new();
     for export_item in exports {
-        names.push(String::from_utf8_lossy(export_item.name()).into());
+        names.push((
+            export_item.ordinal,
+            export_item
+                .name
+                .map(String::from_utf8_lossy)
+                .map(String::from)
+                .unwrap_or_default(),
+        ));
     }
-    names
+    Ok(names)
+}
+
+fn generate_linker_args(exports: &Vec<(u32, String)>) {
+    let out_dir: std::path::PathBuf = std::path::PathBuf::from(env!("OUT_DIR"))
+        .components()
+        .rev()
+        .skip_while(|path| {
+            let path = path.as_os_str().to_str().unwrap_or_default();
+            path == "out" || path.contains("forward-dll-derive") || path == "build"
+        })
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if out_dir.is_dir() {
+        let ordinal_content = exports
+            .iter()
+            .map(|(ordinal, fn_name)| format!("/EXPORT:{}=_{},@{}", fn_name, fn_name, ordinal))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let ordinal_file = out_dir.join("ordinal_link_args.txt");
+        let _ = std::fs::write(ordinal_file, ordinal_content);
+    }
 }

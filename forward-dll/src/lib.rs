@@ -77,7 +77,7 @@ macro_rules! forward_dll {
 #[macro_export]
 macro_rules! define_function {
     ($lib:expr, $name:ident, $index:expr, ) => {};
-    ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
+    ($lib:expr, $name:ident, $index:expr, $export_name:ident = $proc:ident $($procs:tt)*) => {
         const _: () = {
             fn default_jumper(original_fn_addr: *const ()) -> usize {
                 if original_fn_addr as usize != 0 {
@@ -98,7 +98,7 @@ macro_rules! define_function {
             }
 
             #[no_mangle]
-            pub extern "system" fn $proc() -> u32 {
+            pub extern "system" fn $export_name() -> u32 {
                 unsafe {
                     std::arch::asm!(
                         "push rcx",
@@ -132,6 +132,9 @@ macro_rules! define_function {
             }
         };
         $crate::define_function!($lib, $name, ($index + 1), $($procs)*);
+    };
+    ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:tt)*) => {
+        $crate::define_function!($lib, $name, $index, $proc=$proc $($procs)*);
     };
 }
 
