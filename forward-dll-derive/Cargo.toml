@@ -1,7 +1,11 @@
 [package]
 name = "forward-dll-derive"
-version = "0.1.0"
+description = "Forward dll functions."
+version = "0.1.6"
 edition = "2021"
+repository = "https://github.com/hamflx/forward-dll"
+license = "MIT"
+authors = ["hamflx <a@hamflx.cn>"]
 
 [lib]
 proc-macro = true

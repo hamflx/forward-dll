@@ -5,6 +5,28 @@
 ## 使用方法
 
 ```rust
+use forward_dll::ForwardModule;
+
+#[derive(ForwardModule)]
+#[forward("C:\\Windows\\system32\\version.dll")]
+pub struct VersionModule;
+
+const VERSION_LIB: VersionModule = VersionModule;
+
+#[no_mangle]
+pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
+    if reason == 1 {
+        println!("==> version.dll loaded");
+        VERSION_LIB.init().unwrap();
+        println!("==> version.dll initialized");
+    }
+    1
+}
+```
+
+## v0.1.5 及之前版本的使用方法
+
+```rust
 forward_dll::forward_dll!(
   "C:\\Windows\\system32\\version.dll",
   DLL_VERSION_FORWARDER,
@@ -37,6 +59,12 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
   }
   1
 }
+```
+
+## 运行 example
+
+```powershell
+cargo build -p version; cargo run -p just-call-version
 ```
 
 ## License
