@@ -10,8 +10,8 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
         .attrs
         .iter()
         .find(|i| i.path().is_ident("forward"))
-        .unwrap();
-    let dll_path: LitStr = forward_attr.parse_args().unwrap();
+        .expect(r#"你需要添加 #[forward("path/of/target_dll.dll")]"#);
+    let dll_path: LitStr = forward_attr.parse_args().expect(r#"#[forward()] 的参数应为一个字符串字面量，如 #[forward("C:\Windows\System32\version.dll")]"#);
     let struct_name = input.ident;
 
     let export_names = get_dll_export_names(dll_path.value().as_str());
@@ -26,6 +26,8 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
             extern crate forward_dll as _forward_dll;
 
             static mut _FORWARDER: _forward_dll::DllForwarder<#export_count> = _forward_dll::DllForwarder {
+                initialized: false,
+                module_handle: 0,
                 lib_name: #dll_path,
                 target_functions_address: [0; #export_count],
                 target_function_names: [#(#export_names),*],
@@ -35,7 +37,6 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
 
             impl _forward_dll::ForwardModule for #struct_name {
                 fn init(&self) -> _forward_dll::ForwardResult<()> {
-                    let _ = _forward_dll::load_library(#dll_path);
                     unsafe { _FORWARDER.forward_all() }
                 }
             }

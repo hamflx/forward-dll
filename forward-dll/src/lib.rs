@@ -1,12 +1,9 @@
-use std::ffi::{CString, NulError};
+pub mod utils;
 
-use windows_sys::Win32::{
-    Foundation::{GetLastError, HINSTANCE},
-    System::LibraryLoader::{
-        FreeLibrary, GetModuleHandleExA, GetProcAddress, LoadLibraryA,
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-    },
-};
+use std::ffi::NulError;
+
+use utils::ForeignLibrary;
+use windows_sys::Win32::Foundation::HINSTANCE;
 
 pub use forward_dll_derive::ForwardModule;
 
@@ -62,6 +59,8 @@ macro_rules! count {
 macro_rules! forward_dll {
     ($lib:expr, $name:ident, $($proc:ident)*) => {
         static mut $name: $crate::DllForwarder<{ $crate::count!($($proc)*) }> = $crate::DllForwarder {
+            initialized: false,
+            module_handle: 0,
             lib_name: $lib,
             target_functions_address: [
                 0;
@@ -81,8 +80,23 @@ macro_rules! define_function {
     ($lib:expr, $name:ident, $index:expr, $proc:ident $($procs:ident)*) => {
         const _: () = {
             // 需要提前将指针计算出来，不然放在函数内的话，在 dev 模式编译会导致编译器生成 sub rsp, 20h 指令，而且会把字符串长度放在栈上。
-            const lib_name_ptr: *const u8 = std::concat!($lib, "\0").as_ptr();
-            const fn_name_ptr: *const u8 = std::concat!(std::stringify!($proc), "\0").as_ptr();
+            fn default_jumper(original_fn_addr: *const ()) -> usize {
+                if original_fn_addr as usize != 0 {
+                    return original_fn_addr as usize;
+                }
+                match $crate::utils::ForeignLibrary::new($lib) {
+                    Ok(lib) => match lib.get_proc_address(std::stringify!($proc)) {
+                        Ok(addr) => return addr as usize,
+                        Err(err) => eprintln!("Error: {}", err)
+                    }
+                    Err(err) => eprintln!("Error: {}", err)
+                }
+                exit_fn as usize
+            }
+
+            fn exit_fn() {
+                std::process::exit(1);
+            }
 
             #[no_mangle]
             pub extern "system" fn $proc() -> u32 {
@@ -100,10 +114,8 @@ macro_rules! define_function {
                         "sub rsp, 28h",
                         "call rax",
                         "add rsp, 28h",
-                        in("rax") $crate::default_jumper,
-                        in("rcx") lib_name_ptr,
-                        in("rdx") fn_name_ptr,
-                        in("r8") $name.target_functions_address[$index],
+                        in("rax") default_jumper,
+                        in("rcx") $name.target_functions_address[$index],
                         options(nostack)
                     );
                     std::arch::asm!(
@@ -128,6 +140,7 @@ macro_rules! define_function {
 pub enum ForwardError {
     Win32Error(&'static str, u32),
     StringError(NulError),
+    AlreadyInitialized,
 }
 
 impl std::fmt::Display for ForwardError {
@@ -137,6 +150,7 @@ impl std::fmt::Display for ForwardError {
                 write!(f, "Win32Error: {} {}", func_name, err_code)
             }
             ForwardError::StringError(ref err) => write!(f, "StringError: {}", err),
+            ForwardError::AlreadyInitialized => write!(f, "AlreadyInitialized"),
         }
     }
 }
@@ -147,6 +161,8 @@ pub type ForwardResult<T> = std::result::Result<T, ForwardError>;
 
 /// DLL 转发类型的具体实现。该类型不要自己实例化，应调用 forward_dll 宏生成具体的实例。
 pub struct DllForwarder<const N: usize> {
+    pub initialized: bool,
+    pub module_handle: HINSTANCE,
     pub target_functions_address: [usize; N],
     pub target_function_names: [&'static str; N],
     pub lib_name: &'static str,
@@ -155,90 +171,19 @@ pub struct DllForwarder<const N: usize> {
 impl<const N: usize> DllForwarder<N> {
     /// 将所有函数的跳转地址设置为对应的 DLL 的同名函数地址。
     pub fn forward_all(&mut self) -> ForwardResult<()> {
-        let module_handle = load_library(self.lib_name)?;
+        if self.initialized {
+            return Err(ForwardError::AlreadyInitialized);
+        }
 
+        let lib = ForeignLibrary::new(self.lib_name)?;
         for index in 0..self.target_functions_address.len() {
-            let addr_in_remote_module =
-                get_proc_address_by_module(module_handle, self.target_function_names[index])?;
+            let addr_in_remote_module = lib.get_proc_address(self.target_function_names[index])?;
             self.target_functions_address[index] = addr_in_remote_module as *const usize as usize;
         }
 
-        free_library(module_handle);
+        self.module_handle = lib.into_raw();
+        self.initialized = true;
 
         Ok(())
-    }
-}
-
-/// 通过调用 GetModuleHandleExA 增加引用计数。
-pub fn load_library_by_handle(inst: HINSTANCE) -> ForwardResult<HINSTANCE> {
-    let mut module_handle = 0;
-    let pin_success = unsafe {
-        GetModuleHandleExA(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            inst as *const u8,
-            &mut module_handle,
-        )
-    } != 0;
-    if !pin_success {
-        return Err(ForwardError::Win32Error("GetModuleHandleExA", unsafe {
-            GetLastError()
-        }));
-    }
-    Ok(module_handle)
-}
-
-/// 默认的跳板，如果没有执行初始化操作，则进入该函数。
-///
-/// # Safety
-///
-/// 指针将会透传给 Win32 API。
-pub unsafe fn default_jumper(
-    lib_name: *const u8,
-    func_name: *const u8,
-    original_fn_addr: *const (),
-) -> usize {
-    if original_fn_addr as usize != 0 {
-        return original_fn_addr as usize;
-    }
-
-    let module_handle = LoadLibraryA(lib_name);
-    if module_handle != 0 {
-        let addr = GetProcAddress(module_handle, func_name);
-        FreeLibrary(module_handle);
-        return addr.map(|addr| addr as usize).unwrap_or(exit_fn as usize);
-    }
-
-    exit_fn as usize
-}
-
-pub fn exit_fn() {
-    std::process::exit(1);
-}
-
-/// LoadLibraryA 的包装。
-pub fn load_library(lib_filename: &str) -> ForwardResult<HINSTANCE> {
-    let module_name = CString::new(lib_filename).map_err(ForwardError::StringError)?;
-    let module_handle = unsafe { LoadLibraryA(module_name.as_ptr() as *const u8) };
-    if module_handle == 0 {
-        return Err(ForwardError::Win32Error("LoadLibraryA", unsafe {
-            GetLastError()
-        }));
-    }
-    Ok(module_handle)
-}
-
-/// FreeLibrary 的包装。
-pub fn free_library(inst: HINSTANCE) {
-    unsafe { FreeLibrary(inst) };
-}
-
-fn get_proc_address_by_module(
-    inst: HINSTANCE,
-    proc_name: &str,
-) -> ForwardResult<unsafe extern "system" fn() -> isize> {
-    let proc_name = CString::new(proc_name).map_err(ForwardError::StringError)?;
-    unsafe {
-        GetProcAddress(inst, proc_name.as_ptr() as *const u8)
-            .ok_or_else(|| ForwardError::Win32Error("GetProcAddress", GetLastError()))
     }
 }
