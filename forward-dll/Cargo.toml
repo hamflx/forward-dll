@@ -1,11 +1,12 @@
 [package]
 name = "forward-dll"
 description = "Forward dll functions."
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 repository = "https://github.com/hamflx/forward-dll"
 license = "MIT"
 authors = ["hamflx <a@hamflx.cn>"]
+readme = "../README.md"
 
 [dependencies]
 windows-sys = { version = "0.35.0", features = [
