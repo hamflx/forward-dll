@@ -1,3 +1,27 @@
+//! forward-dll 是一个辅助构造转发 DLL 的库。
+//!
+//! # Examples
+//!
+//! ```rust
+//! use forward_dll::ForwardModule;
+//!
+//! #[derive(ForwardModule)]
+//! #[forward(target = "C:\\Windows\\system32\\version.dll", ordinal)]
+//! pub struct VersionModule;
+//!
+//! const VERSION_LIB: VersionModule = VersionModule;
+//!
+//! #[no_mangle]
+//! pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
+//!     if reason == 1 {
+//!         println!("==> version.dll loaded");
+//!         VERSION_LIB.init().unwrap();
+//!         println!("==> version.dll initialized");
+//!     }
+//!     1
+//! }
+//! ```
+
 pub mod utils;
 
 use std::ffi::NulError;
@@ -7,10 +31,13 @@ use windows_sys::Win32::Foundation::HINSTANCE;
 
 pub use forward_dll_derive::ForwardModule;
 
+/// 由过程宏实现的 trait。
 pub trait ForwardModule {
+    /// 初始化转发相关的信息，如，加载目标 DLL 获取目标函数地址。
     fn init(&self) -> ForwardResult<()>;
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! count {
     () => (0usize);
@@ -21,7 +48,7 @@ macro_rules! count {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust
 /// forward_dll::forward_dll!(
 ///   "C:\\Windows\\system32\\version.dll",
 ///   DLL_VERSION_FORWARDER,
@@ -48,7 +75,7 @@ macro_rules! count {
 /// pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 ///   if reason == 1 {
 ///     // 这里要自行持有底层的 version.dll 的句柄，防止被释放。
-///     let _ = forward_dll::load_library("C:\\Windows\\system32\\version.dll");
+///     let _ = forward_dll::utils::load_library("C:\\Windows\\system32\\version.dll");
 ///     // 调用 forward_all 方法，建立导出函数与目标函数之间的映射关系。
 ///     let _ = unsafe { DLL_VERSION_FORWARDER.forward_all() };
 ///   }
@@ -74,6 +101,7 @@ macro_rules! forward_dll {
     };
 }
 
+#[doc(hidden)]
 #[macro_export]
 macro_rules! define_function {
     ($lib:expr, $name:ident, $index:expr, ) => {};
@@ -140,8 +168,11 @@ macro_rules! define_function {
 
 #[derive(Debug)]
 pub enum ForwardError {
+    /// Win32 API 返回的错误。第一个值为调用的 Win32 API 函数名称，第二个为错误代码。
     Win32Error(&'static str, u32),
+    /// 字符串编码错误。
     StringError(NulError),
+    /// 已经初始化过了，不需要再次初始化。
     AlreadyInitialized,
 }
 

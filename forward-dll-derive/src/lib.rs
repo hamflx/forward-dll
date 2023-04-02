@@ -7,6 +7,25 @@ const FORWARD_ATTR_LACK_MESSAGE: &str =
     r#"你需要添加 #[forward(target = "path/of/target_dll.dll")]"#;
 const FORWARD_ATTR_INVALID_MESSAGE: &str = r#"#[forward()] 的参数格式错误，正确格式如 #[forward(target = "C:\Windows\System32\version.dll")]"#;
 
+/// ForwardModule 派生宏。用于读取 DLL 的导出表，生成用于转发的导出函数。
+///
+/// # 使用方式：
+///
+/// ```rust,ignore
+/// use forward_dll::ForwardModule;
+///
+/// #[derive(ForwardModule)]
+/// #[forward(target = "C:\\Windows\\System32\\version.dll")]
+/// struct VersionModule;
+/// ```
+///
+/// 可以使用 `ordinal` 来生成 ordinal 转发的编译参数（注意，这一步无法做到基于 ordinal 转发，需要在 `build.rs` 中读取编译参数文件并打印，请参考本仓库内的 `examples/version`）：
+///
+/// ```rust,ignore
+/// #[derive(ForwardModule)]
+/// #[forward(target = "C:\\Windows\\System32\\version.dll", ordinal)]
+/// struct VersionModule;
+/// ```
 #[proc_macro_derive(ForwardModule, attributes(forward))]
 pub fn derive_forward_module(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as syn::DeriveInput);

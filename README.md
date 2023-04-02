@@ -55,7 +55,7 @@ forward_dll::forward_dll!(
 pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
   if reason == 1 {
     // 这里要自行持有底层的 version.dll 的句柄，防止被释放。
-    let _ = forward_dll::load_library("C:\\Windows\\system32\\version.dll");
+    let _ = forward_dll::utils::load_library("C:\\Windows\\system32\\version.dll");
     // 调用 forward_all 方法，建立导出函数与目标函数之间的映射关系。
     let _ = unsafe { DLL_VERSION_FORWARDER.forward_all() };
   }
