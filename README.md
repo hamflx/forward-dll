@@ -8,7 +8,7 @@
 use forward_dll::ForwardModule;
 
 #[derive(ForwardModule)]
-#[forward("C:\\Windows\\system32\\version.dll")]
+#[forward(target = "C:\\Windows\\system32\\version.dll")]
 pub struct VersionModule;
 
 const VERSION_LIB: VersionModule = VersionModule;
