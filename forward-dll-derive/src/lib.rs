@@ -3,6 +3,10 @@ use proc_macro::TokenStream;
 use quote::{format_ident, quote};
 use syn::{parse_macro_input, LitStr};
 
+const FORWARD_ATTR_LACK_MESSAGE: &str =
+    r#"你需要添加 #[forward(target = "path/of/target_dll.dll")]"#;
+const FORWARD_ATTR_INVALID_MESSAGE: &str = r#"#[forward()] 的参数格式错误，正确格式如 #[forward(target = "C:\Windows\System32\version.dll")]"#;
+
 #[proc_macro_derive(ForwardModule, attributes(forward))]
 pub fn derive_forward_module(item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as syn::DeriveInput);
@@ -10,7 +14,7 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
         .attrs
         .iter()
         .find(|i| i.path().is_ident("forward"))
-        .expect(r#"你需要添加 #[forward(target = "path/of/target_dll.dll")]"#);
+        .expect(FORWARD_ATTR_LACK_MESSAGE);
 
     // 解析 #[forward(target = "", ordinal)] 的参数。
     let mut dll_path: Option<LitStr> = None;
@@ -19,18 +23,18 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
         .parse_nested_meta(|meta| {
             let path = &meta.path;
             if path.is_ident("target") {
-                let value = meta.value().unwrap();
-                dll_path = Some(value.parse().unwrap());
+                let value = meta.value().expect(FORWARD_ATTR_INVALID_MESSAGE);
+                dll_path = Some(value.parse().expect(FORWARD_ATTR_INVALID_MESSAGE));
             } else if path.is_ident("ordinal") {
                 has_ordinal = true;
+            } else {
+                return Err(meta.error(FORWARD_ATTR_INVALID_MESSAGE));
             }
             Ok(())
         })
-        .expect("测试两下");
+        .expect(FORWARD_ATTR_INVALID_MESSAGE);
 
-    let dll_path = dll_path.expect(
-        r#"#[forward()] 的 target 参数为必填项，如 #[forward(target = "C:\Windows\System32\version.dll")]"#,
-    );
+    let dll_path = dll_path.expect(FORWARD_ATTR_INVALID_MESSAGE);
     let exports = get_dll_export_names(dll_path.value().as_str())
         .expect("指定的 DLL 可能是一个无效的 PE 文件");
 
@@ -80,22 +84,22 @@ pub fn derive_forward_module(item: TokenStream) -> TokenStream {
 }
 
 fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
-    let dll_file = std::fs::read(dll_path).unwrap();
+    let dll_file = std::fs::read(dll_path).map_err(|err| format!("Failed to read file: {err}"))?;
     let in_data = dll_file.as_slice();
 
     let kind = object::FileKind::parse(in_data).map_err(|err| format!("Invalid file: {err}"))?;
     let exports = match kind {
         object::FileKind::Pe32 => PeFile32::parse(in_data)
-            .unwrap()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
             .export_table()
-            .unwrap()
-            .unwrap()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
             .exports(),
         object::FileKind::Pe64 => PeFile64::parse(in_data)
-            .unwrap()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
             .export_table()
-            .unwrap()
-            .unwrap()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
             .exports(),
         _ => return Err("Invalid file".to_string()),
     }
