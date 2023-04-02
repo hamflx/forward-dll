@@ -24,6 +24,8 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 }
 ```
 
+**注意，`#[forward(target = "path/of/your/dll")]` 中的路径，应在编译期可以访问到（过程宏会读取这个文件并提取出导出表），如果这个路径为相对路径，则应相对于 `Cargo.toml` 所在的目录。**
+
 ## v0.1.5 及之前版本的使用方法
 
 ```rust
