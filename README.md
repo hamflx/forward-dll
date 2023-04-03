@@ -8,7 +8,7 @@
 
 ```toml
 [build-dependencies]
-forward-dll = "0.1.10"
+forward-dll = "0.1.11"
 ```
 
 在 `build.rs` 中添加如下代码：
