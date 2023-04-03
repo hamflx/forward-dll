@@ -2,7 +2,26 @@
 
 生成 DLL 转发的函数。
 
-## 使用方法
+## 使用方法——静态转发
+
+先在 `Cargo.toml` 中添加依赖：
+
+```toml
+[build-dependencies]
+forward-dll = "0.1.10"
+```
+
+在 `build.rs` 中添加如下代码：
+
+```rust
+use forward_dll::forward_dll;
+
+fn main() {
+  forward_dll("C:\\Windows\\System32\\version.dll").unwrap();
+}
+```
+
+## 使用方法——动态转发
 
 ```rust
 use forward_dll::ForwardModule;

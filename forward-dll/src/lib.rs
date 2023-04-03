@@ -1,12 +1,26 @@
 //! forward-dll 是一个辅助构造转发 DLL 的库。
 //!
-//! # Examples
+//! # Example 1
+//!
+//! 在 `build.rs` 中添加如下代码：
+//!
+//! ```rust
+//! use forward_dll::forward_dll;
+//!
+//! forward_dll("C:\\Windows\\System32\\version.dll").unwrap();
+//! ```
+//!
+//! 这将会读取目标 `DLL` 的导出表，然后使用 `cargo:rustc-*` 输出来链接到目标 DLL。这种方式可以连带 `ordinal` 一起转发。
+//!
+//! # Example 2
+//!
+//! 这种方式是在运行时动态加载目标 `DLL`，然后在导出的函数中，跳转到目标 `DLL` 的地址。
 //!
 //! ```rust
 //! use forward_dll::ForwardModule;
 //!
 //! #[derive(ForwardModule)]
-//! #[forward(target = "C:\\Windows\\system32\\version.dll", ordinal)]
+//! #[forward(target = "C:\\Windows\\system32\\version.dll")]
 //! pub struct VersionModule;
 //!
 //! const VERSION_LIB: VersionModule = VersionModule;
@@ -24,8 +38,10 @@
 
 pub mod utils;
 
-use std::ffi::NulError;
+use std::{ffi::NulError, path::PathBuf};
 
+use implib::{Flavor, ImportLibrary, MachineType};
+use object::read::pe::{PeFile32, PeFile64};
 use utils::ForeignLibrary;
 use windows_sys::Win32::Foundation::HINSTANCE;
 
@@ -219,4 +235,105 @@ impl<const N: usize> DllForwarder<N> {
 
         Ok(())
     }
+}
+
+/// 转发目标 `DLL` 的所有函数，同时会确保 `ordinal` 与目标函数一致。这个函数会读取目标 `DLL` 以获得导出函数信息，因此，要确保目标 `DLL` 在编译期存在。
+pub fn forward_dll(dll_path: &str) -> Result<(), String> {
+    forward_dll_with_dev_path(dll_path, dll_path)
+}
+
+/// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数可以指定在编译时的目标 `DLL` 路径。
+pub fn forward_dll_with_dev_path(dll_path: &str, dev_dll_path: &str) -> Result<(), String> {
+    const SUFFIX: &str = ".dll";
+    let dll_path_without_ext = if dll_path.to_ascii_lowercase().ends_with(SUFFIX) {
+        &dll_path[..dll_path.len() - SUFFIX.len()]
+    } else {
+        dll_path
+    };
+
+    let out_dir = get_tmp_dir();
+
+    // 输出链接参数，转发入口点到目标库。
+    let exports = get_dll_export_names(dev_dll_path)?;
+    for (ordinal, name) in &exports {
+        println!("cargo:rustc-link-arg=/EXPORT:{name}={dll_path_without_ext}.{name},@{ordinal}")
+    }
+
+    // 构造 Import Library。
+    let exports_def = String::from("LIBRARY version\nEXPORTS\n")
+        + exports
+            .iter()
+            .map(|(ordinal, name)| format!("  {name} @{ordinal}\n"))
+            .collect::<String>()
+            .as_str();
+    #[cfg(target_arch = "x86_64")]
+    let machine = MachineType::AMD64;
+    #[cfg(target_arch = "x86")]
+    let machine = MachineType::I386;
+    let lib = ImportLibrary::new(&exports_def, machine, Flavor::Msvc)
+        .map_err(|err| format!("ImportLibrary::new error: {err}"))?;
+    let version_lib_path = out_dir.join("version_proxy.lib");
+    let mut lib_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(version_lib_path)
+        .map_err(|err| format!("OpenOptions::open error: {err}"))?;
+    lib.write_to(&mut lib_file)
+        .map_err(|err| format!("ImportLibrary::write_to error: {err}"))?;
+
+    println!("cargo:rustc-link-search={}", out_dir.display());
+    println!("cargo:rustc-link-lib=version_proxy");
+
+    Ok(())
+}
+
+/// 查询 OUT_DIR 变量，作为创建的 Import Library 存储路径。如果是在 doctest 的上下文中，是取不到 OUT_DIR 的。
+fn get_tmp_dir() -> PathBuf {
+    std::env::var("OUT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let dir = std::env::temp_dir().join("forward-dll-libs");
+            if !dir.exists() {
+                std::fs::create_dir_all(&dir).expect("Failed to create temp dir");
+            }
+            dir
+        })
+}
+
+fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
+    let dll_file = std::fs::read(dll_path).map_err(|err| format!("Failed to read file: {err}"))?;
+    let in_data = dll_file.as_slice();
+
+    let kind = object::FileKind::parse(in_data).map_err(|err| format!("Invalid file: {err}"))?;
+    let exports = match kind {
+        object::FileKind::Pe32 => PeFile32::parse(in_data)
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .export_table()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
+            .exports(),
+        object::FileKind::Pe64 => PeFile64::parse(in_data)
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .export_table()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
+            .exports(),
+        _ => return Err("Invalid file".to_string()),
+    }
+    .map_err(|err| format!("Invalid file: {err}"))?;
+
+    let mut names = Vec::new();
+    for export_item in exports {
+        let export_name = export_item
+            .name
+            .map(String::from_utf8_lossy)
+            .map(String::from)
+            .unwrap_or_default();
+        if export_name == "GetFileVersionInfoByHandle" {
+            continue;
+        }
+        names.push((export_item.ordinal, export_name));
+    }
+    Ok(names)
 }
