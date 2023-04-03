@@ -8,4 +8,6 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+
+[build-dependencies]
 forward-dll = { path = "../../forward-dll" }

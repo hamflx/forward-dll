@@ -24,8 +24,10 @@
 
 pub mod utils;
 
-use std::ffi::NulError;
+use std::{ffi::NulError, path::PathBuf};
 
+use implib::{Flavor, ImportLibrary, MachineType};
+use object::read::pe::{PeFile32, PeFile64};
 use utils::ForeignLibrary;
 use windows_sys::Win32::Foundation::HINSTANCE;
 
@@ -219,4 +221,86 @@ impl<const N: usize> DllForwarder<N> {
 
         Ok(())
     }
+}
+
+pub fn forward_dll(dll_path: &str, generate_import_lib: bool) -> Result<(), String> {
+    const SUFFIX: &str = ".dll";
+    let dll_path_without_ext = if dll_path.to_ascii_lowercase().ends_with(SUFFIX) {
+        &dll_path[..dll_path.len() - SUFFIX.len()]
+    } else {
+        dll_path
+    };
+
+    let out_dir: PathBuf = std::env::var("OUT_DIR")
+        .map_err(|err| format!("No OUT_DIR env: {err}"))?
+        .into();
+
+    // 输出链接参数，转发入口点到目标库。
+    let exports = get_dll_export_names(dll_path)?;
+    for (ordinal, name) in &exports {
+        println!("cargo:rustc-link-arg=/EXPORT:{name}={dll_path_without_ext}.{name},@{ordinal}")
+    }
+
+    // 构造 Import Library。
+    if generate_import_lib {
+        let exports_def = String::from("LIBRARY version\nEXPORTS\n")
+            + exports
+                .iter()
+                .map(|(ordinal, name)| format!("  {name} @{ordinal}\n"))
+                .collect::<String>()
+                .as_str();
+        let lib = ImportLibrary::new(&exports_def, MachineType::ARM64, Flavor::Msvc)
+            .map_err(|err| format!("ImportLibrary::new error: {err}"))?;
+        let version_lib_path = out_dir.join("version_proxy.lib");
+        let mut lib_file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&version_lib_path)
+            .map_err(|err| format!("OpenOptions::open error: {err}"))?;
+        lib.write_to(&mut lib_file)
+            .map_err(|err| format!("ImportLibrary::write_to error: {err}"))?;
+
+        println!("cargo:rustc-link-search={}", out_dir.display());
+        println!("cargo:rustc-link-lib=version_proxy");
+    }
+
+    Ok(())
+}
+
+fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
+    let dll_file = std::fs::read(dll_path).map_err(|err| format!("Failed to read file: {err}"))?;
+    let in_data = dll_file.as_slice();
+
+    let kind = object::FileKind::parse(in_data).map_err(|err| format!("Invalid file: {err}"))?;
+    let exports = match kind {
+        object::FileKind::Pe32 => PeFile32::parse(in_data)
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .export_table()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
+            .exports(),
+        object::FileKind::Pe64 => PeFile64::parse(in_data)
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .export_table()
+            .map_err(|err| format!("Invalid pe file: {err}"))?
+            .ok_or_else(|| "No export table".to_string())?
+            .exports(),
+        _ => return Err("Invalid file".to_string()),
+    }
+    .map_err(|err| format!("Invalid file: {err}"))?;
+
+    let mut names = Vec::new();
+    for export_item in exports {
+        let export_name = export_item
+            .name
+            .map(String::from_utf8_lossy)
+            .map(String::from)
+            .unwrap_or_default();
+        if export_name == "GetFileVersionInfoByHandle" {
+            continue;
+        }
+        names.push((export_item.ordinal, export_name));
+    }
+    Ok(names)
 }
