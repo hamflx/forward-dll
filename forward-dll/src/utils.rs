@@ -1,7 +1,7 @@
 use std::ffi::CString;
 
 use windows_sys::Win32::{
-    Foundation::{GetLastError, HINSTANCE},
+    Foundation::{GetLastError, HMODULE},
     System::LibraryLoader::{
         FreeLibrary, GetModuleHandleExA, GetProcAddress, LoadLibraryA,
         GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
@@ -11,7 +11,7 @@ use windows_sys::Win32::{
 use crate::{ForwardError, ForwardResult};
 
 /// 通过调用 GetModuleHandleExA 增加引用计数。
-pub fn load_library_by_handle(inst: HINSTANCE) -> ForwardResult<HINSTANCE> {
+pub fn load_library_by_handle(inst: HMODULE) -> ForwardResult<HMODULE> {
     let mut module_handle = 0;
     let pin_success = unsafe {
         GetModuleHandleExA(
@@ -29,7 +29,7 @@ pub fn load_library_by_handle(inst: HINSTANCE) -> ForwardResult<HINSTANCE> {
 }
 
 /// LoadLibraryA 的包装。
-pub fn load_library(lib_filename: &str) -> ForwardResult<HINSTANCE> {
+pub fn load_library(lib_filename: &str) -> ForwardResult<HMODULE> {
     let module_name = CString::new(lib_filename).map_err(ForwardError::StringError)?;
     let module_handle = unsafe { LoadLibraryA(module_name.as_ptr() as *const u8) };
     if module_handle == 0 {
@@ -41,13 +41,13 @@ pub fn load_library(lib_filename: &str) -> ForwardResult<HINSTANCE> {
 }
 
 /// FreeLibrary 的包装。
-pub fn free_library(inst: HINSTANCE) {
+pub fn free_library(inst: HMODULE) {
     unsafe { FreeLibrary(inst) };
 }
 
 /// 取得指定函数名称的函数地址。
 pub fn get_proc_address_by_module(
-    inst: HINSTANCE,
+    inst: HMODULE,
     proc_name: &str,
 ) -> ForwardResult<unsafe extern "system" fn() -> isize> {
     let proc_name = CString::new(proc_name).map_err(ForwardError::StringError)?;
@@ -58,7 +58,7 @@ pub fn get_proc_address_by_module(
 }
 
 pub struct ForeignLibrary {
-    pub module_handle: HINSTANCE,
+    pub module_handle: HMODULE,
 }
 
 impl ForeignLibrary {
@@ -74,7 +74,7 @@ impl ForeignLibrary {
         get_proc_address_by_module(self.module_handle, proc_name)
     }
 
-    pub fn into_raw(self) -> HINSTANCE {
+    pub fn into_raw(self) -> HMODULE {
         let handle = self.module_handle;
         std::mem::forget(self);
         handle

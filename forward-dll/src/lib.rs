@@ -43,9 +43,9 @@ use std::{ffi::NulError, path::PathBuf};
 use implib::{Flavor, ImportLibrary, MachineType};
 use object::read::pe::{PeFile32, PeFile64};
 use utils::ForeignLibrary;
-use windows_sys::Win32::Foundation::HINSTANCE;
 
 pub use forward_dll_derive::ForwardModule;
+use windows_sys::Win32::Foundation::HMODULE;
 
 /// 由过程宏实现的 trait。
 pub trait ForwardModule {
@@ -211,7 +211,7 @@ pub type ForwardResult<T> = std::result::Result<T, ForwardError>;
 /// DLL 转发类型的具体实现。该类型不要自己实例化，应调用 forward_dll 宏生成具体的实例。
 pub struct DllForwarder<const N: usize> {
     pub initialized: bool,
-    pub module_handle: HINSTANCE,
+    pub module_handle: HMODULE,
     pub target_functions_address: [usize; N],
     pub target_function_names: [&'static str; N],
     pub lib_name: &'static str,
