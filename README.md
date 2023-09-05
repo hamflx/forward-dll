@@ -21,6 +21,35 @@ fn main() {
 }
 ```
 
+## 自定义转发
+
+```rust
+use forward_dll::forward_dll_with_exports;
+forward_dll_with_exports(
+    "C:\\Windows\\system32\\version.dll",
+    &[
+        (1, "GetFileVersionInfoA"),
+        (2, "GetFileVersionInfoByHandle"),
+        (3, "GetFileVersionInfoExA"),
+        (4, "GetFileVersionInfoExW"),
+        (5, "GetFileVersionInfoSizeA"),
+        (6, "GetFileVersionInfoSizeExA"),
+        (7, "GetFileVersionInfoSizeExW"),
+        (8, "GetFileVersionInfoSizeW"),
+        (9, "GetFileVersionInfoW"),
+        (10, "VerFindFileA"),
+        (11, "VerFindFileW"),
+        (12, "VerInstallFileA"),
+        (13, "VerInstallFileW"),
+        (14, "VerLanguageNameA"),
+        (15, "VerLanguageNameW"),
+        (16, "VerQueryValueA"),
+        (17, "VerQueryValueW"),
+    ],
+)
+.unwrap();
+```
+
 ## 使用方法——动态转发
 
 ```rust

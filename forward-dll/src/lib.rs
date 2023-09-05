@@ -244,6 +244,19 @@ pub fn forward_dll(dll_path: &str) -> Result<(), String> {
 
 /// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数可以指定在编译时的目标 `DLL` 路径。
 pub fn forward_dll_with_dev_path(dll_path: &str, dev_dll_path: &str) -> Result<(), String> {
+    let exports = get_dll_export_names(dev_dll_path)?;
+    forward_dll_with_exports(
+        dll_path,
+        exports
+            .iter()
+            .map(|(ord, name)| (*ord, name.as_str()))
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )
+}
+
+/// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数不要求在编译期存在 dll。
+pub fn forward_dll_with_exports(dll_path: &str, exports: &[(u32, &str)]) -> Result<(), String> {
     const SUFFIX: &str = ".dll";
     let dll_path_without_ext = if dll_path.to_ascii_lowercase().ends_with(SUFFIX) {
         &dll_path[..dll_path.len() - SUFFIX.len()]
@@ -254,8 +267,7 @@ pub fn forward_dll_with_dev_path(dll_path: &str, dev_dll_path: &str) -> Result<(
     let out_dir = get_tmp_dir();
 
     // 输出链接参数，转发入口点到目标库。
-    let exports = get_dll_export_names(dev_dll_path)?;
-    for (ordinal, name) in &exports {
+    for (ordinal, name) in exports {
         println!("cargo:rustc-link-arg=/EXPORT:{name}={dll_path_without_ext}.{name},@{ordinal}")
     }
 
@@ -330,9 +342,6 @@ fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
             .map(String::from_utf8_lossy)
             .map(String::from)
             .unwrap_or_default();
-        if export_name == "GetFileVersionInfoByHandle" {
-            continue;
-        }
         names.push((export_item.ordinal, export_name));
     }
     Ok(names)
