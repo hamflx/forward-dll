@@ -40,7 +40,7 @@ pub mod utils;
 
 use std::{ffi::NulError, path::PathBuf};
 
-use implib::{Flavor, ImportLibrary, MachineType};
+use implib::{def::ModuleDef, Flavor, ImportLibrary, MachineType};
 use object::read::pe::{PeFile32, PeFile64};
 use utils::ForeignLibrary;
 
@@ -282,8 +282,12 @@ pub fn forward_dll_with_exports(dll_path: &str, exports: &[(u32, &str)]) -> Resu
     let machine = MachineType::AMD64;
     #[cfg(target_arch = "x86")]
     let machine = MachineType::I386;
-    let lib = ImportLibrary::new(&exports_def, machine, Flavor::Msvc)
+    let mut def = ModuleDef::parse(&exports_def, machine)
         .map_err(|err| format!("ImportLibrary::new error: {err}"))?;
+    for item in def.exports.iter_mut() {
+        item.symbol_name = item.name.trim_start_matches('_').to_string();
+    }
+    let lib = ImportLibrary::from_def(def, machine, Flavor::Msvc);
     let version_lib_path = out_dir.join("version_proxy.lib");
     let mut lib_file = std::fs::OpenOptions::new()
         .create(true)
