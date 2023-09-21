@@ -143,6 +143,19 @@ macro_rules! define_function {
 
             #[no_mangle]
             pub extern "system" fn $export_name() -> u32 {
+                #[cfg(target_arch = "x86")]
+                unsafe {
+                    std::arch::asm!(
+                        "push ecx",
+                        "call eax",
+                        "add esp, 4h",
+                        "jmp eax",
+                        in("eax") default_jumper,
+                        in("ecx") $name.target_functions_address[$index],
+                        options(nostack)
+                    );
+                }
+                #[cfg(target_arch = "x86_64")]
                 unsafe {
                     std::arch::asm!(
                         "push rcx",
