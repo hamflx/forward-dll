@@ -305,7 +305,7 @@ fn forward_dll_impl(dll_path: &str, exports: &[ExportItem]) -> Result<(), String
                 anonymous_name_id += 1;
                 let fn_name = format!("forward_dll_anonymous_{anonymous_name_id}");
                 println!(
-                    "cargo:rustc-link-arg=/EXPORT:{fn_name}={dll_path_without_ext}.#{ordinal},@{ordinal}"
+                    "cargo:rustc-link-arg=/EXPORT:{fn_name}={dll_path_without_ext}.#{ordinal},@{ordinal},NONAME"
                 );
                 anonymous_map.insert(ordinal, fn_name);
             }
