@@ -21,7 +21,7 @@ fn main() {
 }
 ```
 
-## 自定义转发
+## 使用方法——自定义静态转发
 
 ```rust
 use forward_dll::forward_dll_with_exports;
@@ -74,6 +74,12 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 
 **注意，`#[forward(target = "path/of/your/dll")]` 中的路径，应在编译期可以访问到（过程宏会读取这个文件并提取出导出表），如果这个路径为相对路径，则应相对于 `Cargo.toml` 所在的目录。**
 
+## 限制
+
+- 动态转发不支持设置 `ordinal`，更不支持转发仅导出 `ordinal` 的符号。
+
+  > 这是因为 `Rust` 目前不支持设置导出符号，如果需要仅导出 `ordinal` 或设置 `ordinal` 需要通过 `build.rs` 修改链接参数来实现，而这个如何与过程宏协作是较为麻烦的问题。如果有这方面需要可以探讨下怎么实现。
+
 ## v0.1.5 及之前版本的使用方法
 
 ```rust
@@ -113,8 +119,11 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 
 ## 运行 example
 
+**警告：运行的时候会发出声音（调用了 winmm.dll 中的 PlaySoundW）。**
+
 ```powershell
-cargo build -p version; cargo run -p just-call-version
+cargo build -p version -p winmm
+cargo run -p just-call-version
 ```
 
 ## License

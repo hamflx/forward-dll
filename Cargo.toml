@@ -3,5 +3,6 @@ members = [
   "forward-dll",
   "forward-dll-derive",
   "examples/version",
+  "examples/winmm",
   "examples/just-call-version"
 ]
