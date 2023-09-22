@@ -78,7 +78,7 @@ pub extern "system" fn DllMain(_inst: isize, reason: u32, _: *const u8) -> u32 {
 
 - 动态转发不支持设置 `ordinal`，更不支持转发仅导出 `ordinal` 的符号。
 
-  > 这是因为 `Rust` 目前不支持设置导出符号，如果需要仅导出 `ordinal` 或设置 `ordinal` 需要通过 `build.rs` 修改链接参数来实现，而这个如何与过程宏协作是较为麻烦的问题。如果有这方面需要可以探讨下怎么实现。
+  > 这是因为 `Rust` 目前不支持设置导出 `ordinal`，如果需要仅导出 `ordinal` 或设置 `ordinal` 需要通过 `build.rs` 修改链接参数来实现，而这个如何与过程宏协作是较为麻烦的问题。如果有这方面需要可以探讨下怎么实现。
 
 ## v0.1.5 及之前版本的使用方法
 
