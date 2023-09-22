@@ -38,7 +38,7 @@
 
 pub mod utils;
 
-use std::{ffi::NulError, path::PathBuf};
+use std::{collections::HashMap, ffi::NulError, path::PathBuf};
 
 use implib::{def::ModuleDef, Flavor, ImportLibrary, MachineType};
 use object::read::pe::{PeFile32, PeFile64};
@@ -250,6 +250,11 @@ impl<const N: usize> DllForwarder<N> {
     }
 }
 
+struct ExportItem {
+    ordinal: u32,
+    name: Option<String>,
+}
+
 /// 转发目标 `DLL` 的所有函数，同时会确保 `ordinal` 与目标函数一致。这个函数会读取目标 `DLL` 以获得导出函数信息，因此，要确保目标 `DLL` 在编译期存在。
 pub fn forward_dll(dll_path: &str) -> Result<(), String> {
     forward_dll_with_dev_path(dll_path, dll_path)
@@ -258,18 +263,25 @@ pub fn forward_dll(dll_path: &str) -> Result<(), String> {
 /// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数可以指定在编译时的目标 `DLL` 路径。
 pub fn forward_dll_with_dev_path(dll_path: &str, dev_dll_path: &str) -> Result<(), String> {
     let exports = get_dll_export_names(dev_dll_path)?;
-    forward_dll_with_exports(
+    forward_dll_impl(dll_path, exports.as_slice())
+}
+
+/// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数不要求在编译期存在 dll。
+pub fn forward_dll_with_exports(dll_path: &str, exports: &[(u32, &str)]) -> Result<(), String> {
+    forward_dll_impl(
         dll_path,
         exports
             .iter()
-            .map(|(ord, name)| (*ord, name.as_str()))
+            .map(|(ord, name)| ExportItem {
+                ordinal: *ord,
+                name: Some(name.to_string()),
+            })
             .collect::<Vec<_>>()
             .as_slice(),
     )
 }
 
-/// 转发目标 `DLL` 的所有函数。与 `forward_dll` 类似，区别在于这个函数不要求在编译期存在 dll。
-pub fn forward_dll_with_exports(dll_path: &str, exports: &[(u32, &str)]) -> Result<(), String> {
+fn forward_dll_impl(dll_path: &str, exports: &[ExportItem]) -> Result<(), String> {
     const SUFFIX: &str = ".dll";
     let dll_path_without_ext = if dll_path.to_ascii_lowercase().ends_with(SUFFIX) {
         &dll_path[..dll_path.len() - SUFFIX.len()]
@@ -279,16 +291,38 @@ pub fn forward_dll_with_exports(dll_path: &str, exports: &[(u32, &str)]) -> Resu
 
     let out_dir = get_tmp_dir();
 
+    // 有些导出符号没有名称，在编译的过程中，临时取一个符号名。
+    let mut anonymous_map = HashMap::new();
+    let mut anonymous_name_id = 0;
+
     // 输出链接参数，转发入口点到目标库。
-    for (ordinal, name) in exports {
-        println!("cargo:rustc-link-arg=/EXPORT:{name}={dll_path_without_ext}.{name},@{ordinal}")
+    for ExportItem { name, ordinal } in exports {
+        match name {
+            Some(name) => println!(
+                "cargo:rustc-link-arg=/EXPORT:{name}={dll_path_without_ext}.{name},@{ordinal}"
+            ),
+            None => {
+                anonymous_name_id += 1;
+                let fn_name = format!("forward_dll_anonymous_{anonymous_name_id}");
+                println!(
+                    "cargo:rustc-link-arg=/EXPORT:{fn_name}={dll_path_without_ext}.#{ordinal},@{ordinal}"
+                );
+                anonymous_map.insert(ordinal, fn_name);
+            }
+        };
     }
 
     // 构造 Import Library。
     let exports_def = String::from("LIBRARY version\nEXPORTS\n")
         + exports
             .iter()
-            .map(|(ordinal, name)| format!("  {name} @{ordinal}\n"))
+            .map(|ExportItem { name, ordinal }| match name {
+                Some(name) => format!("  {name} @{ordinal}\n"),
+                None => {
+                    let fn_name = anonymous_map.get(ordinal).unwrap();
+                    format!("  {fn_name} @{ordinal} NONAME\n")
+                }
+            })
             .collect::<String>()
             .as_str();
     #[cfg(target_arch = "x86_64")]
@@ -330,7 +364,7 @@ fn get_tmp_dir() -> PathBuf {
         })
 }
 
-fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
+fn get_dll_export_names(dll_path: &str) -> Result<Vec<ExportItem>, String> {
     let dll_file = std::fs::read(dll_path).map_err(|err| format!("Failed to read file: {err}"))?;
     let in_data = dll_file.as_slice();
 
@@ -352,14 +386,15 @@ fn get_dll_export_names(dll_path: &str) -> Result<Vec<(u32, String)>, String> {
     }
     .map_err(|err| format!("Invalid file: {err}"))?;
 
-    let mut names = Vec::new();
+    let mut export_list = Vec::new();
     for export_item in exports {
-        let export_name = export_item
+        let ordinal = export_item.ordinal;
+        let name = export_item
             .name
             .map(String::from_utf8_lossy)
-            .map(String::from)
-            .unwrap_or_default();
-        names.push((export_item.ordinal, export_name));
+            .map(String::from);
+        let item = ExportItem { name, ordinal };
+        export_list.push(item);
     }
-    Ok(names)
+    Ok(export_list)
 }
